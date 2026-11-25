@@ -10,16 +10,19 @@ Interactive mode requires a terminal (`Console.WindowWidth` / ANSI alt-screen) a
 
 ```powershell
 dotnet build
+dotnet build -c Release
 dotnet run -- --test
-dotnet run -- --frames 300 --deterministic
-dotnet run -- --frames 300 --fast-float
+dotnet run -- --analyze
+dotnet run -- --doc-symbols
+dotnet run -- --frames 120 --checksum --dump-ascii
+dotnet run -- --script "v,space,wait:5,enter,3,enter" --save-bmp local/voronoi.bmp --save-gif local/run.gif
 ```
 
 ---
 
 ## 2. Formatting & Code-Style Standards
 
-Enforced automatically via [.editorconfig](.editorconfig), [.gitattributes](.gitattributes), and [.vscode/settings.json](.vscode/settings.json):
+Enforced automatically via [.editorconfig](.editorconfig), [.gitattributes](.gitattributes), [.vscode/settings.json](.vscode/settings.json), and `RoslynProjectAnalyzer`:
 
 1. **K&R / Same-Line Opening Braces Everywhere**:
    * Opening `{` MUST be on the same line as namespaces, types, methods, properties, lambdas, and control structures (`if`, `else`, `for`, `while`, `switch`, `try`, `catch`).
@@ -49,16 +52,16 @@ Optimize code and comments for high signal-to-token ratio so LLM agents parse an
 
 ---
 
-## 4. Core Engine Invariants
+## 4. Core Engine Invariants & Agent Tooling
 
-Read [ARCHITECTURE.md](ARCHITECTURE.md) before making structural changes:
+Read [ARCHITECTURE.md](ARCHITECTURE.md) and [PREPROCESSOR_SYMBOLS.md](PREPROCESSOR_SYMBOLS.md) before making structural changes:
 
 1. **Strict `EngineCore/` Isolation**:
-   * Zero `System.Console`, `ConsoleKey`, P/Invoke, or `.NET 7+/10`-only APIs (`Int128`) in `EngineCore/`. Use `Engine.KeyCode`, `PointerInputEvent`, and `IRenderBackend`.
-2. **Frame-Deterministic Simulation**:
-   * Never use wall-clock delta time (`Stopwatch`) in simulation. Advance strictly by `FrameClock.FixedDeltaTime` and `FrameClock.CurrentFrame`.
-   * Use `FNum`/`FVec2` for physics and gameplay state; use hardware `float`/`Vec2` for rendering, UI, Voronoi pixel evaluation, and particles.
-3. **Deterministic Failure Diagnostics**:
-   * When adding assertions in `Testing/FunctionalityTests.cs`, include actual vs. expected values and frame numbers in failure messages so agent test runs diagnose bugs in one turn without interactive debugging.
+   * Zero `System.Console`, `ConsoleKey`, `ConsoleColor`, P/Invoke, or `.NET 7+/10`-only APIs (`Int128`) in `EngineCore/`. Use `Engine.KeyCode`, `PointerInputEvent`, `IRenderBackend`, and `Logging.Log`.
+2. **Preprocessor Directives & Debug Stripping**:
+   * Guard debug-only diagnostics (`StateChecksum`, `assert_checksum`) with `#if DEBUG` and logging internals with `#if DEBUG || KEEP_LOGS`.
+   * Whenever `#if` directives change, regenerate [PREPROCESSOR_SYMBOLS.md](PREPROCESSOR_SYMBOLS.md) with `dotnet run -- --doc-symbols`.
+3. **Visual & Deterministic Verification**:
+   * Use `--checksum` (`#if DEBUG`), `--script "<cmds>"`, `--dump-ascii`, `--save-bmp`, and `--save-gif` (outputting to gitignored `local/`) to inspect visual layout and deterministic physics regressions directly from the command line.
 4. **Keep Documentation & Tests in Sync**:
    * Every new feature or behavior change requires a corresponding test in `Testing/FunctionalityTests.cs` and an update to [ARCHITECTURE.md](ARCHITECTURE.md).

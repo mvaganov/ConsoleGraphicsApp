@@ -1,19 +1,23 @@
 #nullable enable
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Text;
 using ConsoleGraphicsEngine.CliHost;
 using ConsoleGraphicsEngine.Engine;
+using ConsoleGraphicsEngine.Logging;
 using ConsoleGraphicsEngine.MathCore;
 using ConsoleGraphicsEngine.Particles;
 using ConsoleGraphicsEngine.Physics;
 using ConsoleGraphicsEngine.Rendering;
 using ConsoleGraphicsEngine.SceneGraph;
+using ConsoleGraphicsEngine.Scripting;
 using ConsoleGraphicsEngine.UI;
 using ConsoleGraphicsEngine.UnityBridge;
 using ConsoleGraphicsEngine.Voronoi;
 
 namespace ConsoleGraphicsEngine.Testing {
-	/// <summary>11-part automated CLI test suite invoked via <c>dotnet run -- --test</c>.</summary>
+	/// <summary>16-part automated CLI test suite invoked via <c>dotnet run -- --test</c>.</summary>
 	public static class FunctionalityTests {
 		public static int RunAllTests() {
 			int passed = 0, failed = 0;
@@ -42,6 +46,11 @@ namespace ConsoleGraphicsEngine.Testing {
 			Run("9. Scene, Entity, RigidBodyComponent & ShapeRendererComponent lifecycle synchronization", TestSceneAndEntityComponents);
 			Run("10. Pointer / Touch / ANSI SGR-1006 Mouse input & interactive UISlider/UIButton hit-testing", TestPointerAndInteractiveUIWidgets);
 			Run("11. Dual-mode IRenderBackend: CanvasRenderBackend vs UnityNativeVectorBackend", TestDualRenderBackends);
+			Run("12. Portable Log system (EngineCore/Logging/Log.cs) visibility, color escapes, and file sink", TestLoggingSystem);
+			Run("13. Deterministic 64-bit FNV-1a StateChecksum (#if DEBUG) reproducibility & perturbation", TestStateChecksum);
+			Run("14. InputScriptEngine batched deterministic scripting & inline invariant assertions", TestInputScriptingEngine);
+			Run("15. FrameExporter ASCII/ANSI snapshots and BMP + Animated GIF89a export to local/", TestFrameExporterBmpAndGif);
+			Run("16. Roslyn static analysis (EngineCore isolation, K&R braces, LF, CLI Help) & Preprocessor Symbol Docs", TestRoslynAnalyzerAndPreprocessorDocs);
 
 			Console.WriteLine($"=== Results: {passed} passed, {failed} failed ===");
 			return failed == 0 ? 0 : 1;
@@ -272,6 +281,141 @@ namespace ConsoleGraphicsEngine.Testing {
 			app.SetRenderBackend(new CanvasRenderBackend(100, 60));
 			app.StepFrame();
 			Assert(app.RenderBackend.SoftwareCanvas != null && app.Canvas.Width == 100, "Runtime switch to CanvasRenderBackend failed.");
+		}
+
+		sealed class MemoryLogSink : ILogSink {
+			public LogColorPair CurrentColor { get; set; } = LogColorPair.Default;
+			public readonly StringBuilder Buffer = new StringBuilder();
+			public void Write(string text) => Buffer.Append(text);
+		}
+
+		static void TestLoggingSystem() {
+			ILogSink? prevSink = Log.Sink;
+			Log.Code prevVis = Log.visibility;
+			string prevFile = Log.LogFile;
+			bool prevSource = Log.IdentifySourceCode;
+			try {
+				var memSink = new MemoryLogSink();
+				Log.Sink = memSink;
+				Log.visibility = Log.Code.Verbose;
+				Log.IdentifySourceCode = false;
+				Log.LogFile = "local/test_log.txt";
+				Log.InitLogFile();
+
+				Log.i("Engine_Info_Marker");
+				Log.Assert(2 + 2 == 4, "Math_Check_Pass");
+
+				string output = memSink.Buffer.ToString();
+#if DEBUG || KEEP_LOGS
+				Assert(output.Contains("Engine_Info_Marker", StringComparison.Ordinal), "Expected Log.i output in sink under DEBUG/KEEP_LOGS.");
+				Assert(File.Exists("local/test_log.txt"), "Expected local/test_log.txt to be created.");
+#endif
+				string stackPos = Log.StackPosition(1);
+				Assert(stackPos.Contains("FunctionalityTests", StringComparison.Ordinal), $"StackPosition should identify caller file, got '{stackPos}'.");
+			} finally {
+				Log.Sink = prevSink;
+				Log.visibility = prevVis;
+				Log.LogFile = prevFile;
+				Log.IdentifySourceCode = prevSource;
+			}
+		}
+
+		static void TestStateChecksum() {
+#if DEBUG
+			bool prev = FNum.Deterministic;
+			try {
+				FNum.Deterministic = true;
+				var app1 = new GameApplication(80, 40, 60);
+				var app2 = new GameApplication(80, 40, 60);
+				for (int i = 0; i < 45; i++) {
+					app1.StepFrame();
+					app2.StepFrame();
+				}
+				ulong h1 = StateChecksum.Compute(app1);
+				ulong h2 = StateChecksum.Compute(app2);
+				Assert(h1 == h2 && h1 != 0, $"Deterministic StateChecksum mismatch: 0x{h1:X16} vs 0x{h2:X16}");
+
+				// Perturb state by 1 raw fixed-point unit (2^-32) and verify checksum changes
+				app2.World.Circle.Position = new FVec2(FNum.FromRaw(app2.World.Circle.Position.X.FixedRaw + 1), app2.World.Circle.Position.Y);
+				ulong hPerturbed = StateChecksum.Compute(app2);
+				Assert(h1 != hPerturbed, "StateChecksum must detect single-bit fixed-point position change.");
+			} finally {
+				FNum.Deterministic = prev;
+			}
+#endif
+		}
+
+		static void TestInputScriptingEngine() {
+			bool prev = FNum.Deterministic;
+			try {
+				FNum.Deterministic = true;
+				const string script = "assert_mode:Physics, v, assert_mode:Voronoi, hold:d:5, space, assert_seeds:6, enter, assert_picker:open, 3, enter, assert_picker:closed, wait:4";
+
+				var appA = new GameApplication(80, 40, 60);
+				var engineA = new InputScriptEngine();
+				engineA.LoadScript(script);
+				int framesA = engineA.RunToCompletion(appA);
+
+				var appB = new GameApplication(80, 40, 60);
+				var engineB = new InputScriptEngine();
+				engineB.LoadScript(script);
+				int framesB = engineB.RunToCompletion(appB);
+
+				Assert(framesA == framesB && framesA > 10, $"Script frame count mismatch: {framesA} vs {framesB}");
+				Assert(appA.ViewMode == AppViewMode.Voronoi && appA.Voronoi.Seeds.Count == 6 && !appA.Voronoi.ColorPicker.IsOpen,
+					"Scripted Voronoi workflow final state mismatch.");
+#if DEBUG
+				Assert(StateChecksum.Compute(appA) == StateChecksum.Compute(appB), "Scripted runs must yield identical StateChecksum.");
+#endif
+			} finally {
+				FNum.Deterministic = prev;
+			}
+		}
+
+		static void TestFrameExporterBmpAndGif() {
+			var app = new GameApplication(60, 30, 60);
+			app.StepFrame();
+
+			string ascii = FrameExporter.DumpAsciiSnapshot(app.Canvas, app.Clock.CurrentFrame);
+			Assert(ascii.Contains("PHYSICS ARENA", StringComparison.Ordinal) && ascii.Contains("+ origin", StringComparison.Ordinal),
+				"ASCII frame snapshot must contain overlaid HUD and world text.");
+
+			string ansi = FrameExporter.DumpAnsiSnapshot(app.Canvas);
+			Assert(ansi.Contains("\u001b[38;2;", StringComparison.Ordinal) && ansi.Contains("\u2580", StringComparison.Ordinal),
+				"ANSI frame snapshot must contain 24-bit escape codes and upper-half-block glyphs.");
+
+			string bmpPath = FrameExporter.SaveBmp(app.Canvas, "local/test_frame.bmp", pixelScale: 3);
+			Assert(File.Exists(bmpPath), "BMP file was not created in local/.");
+			byte[] bmpBytes = File.ReadAllBytes(bmpPath);
+			Assert(bmpBytes.Length > 54 && bmpBytes[0] == (byte)'B' && bmpBytes[1] == (byte)'M', "Invalid BMP header.");
+
+			var gif = new GifRecorder(pixelScale: 2);
+			gif.CaptureFrame(app.Canvas);
+			app.ToggleViewMode();
+			app.StepFrame();
+			gif.CaptureFrame(app.Canvas);
+			string gifPath = gif.Save("local/test_capture.gif", delayCentiseconds: 4);
+			Assert(File.Exists(gifPath), "GIF file was not created in local/.");
+			byte[] gifBytes = File.ReadAllBytes(gifPath);
+			Assert(gifBytes.Length > 800 && Encoding.ASCII.GetString(gifBytes, 0, 6) == "GIF89a" && gifBytes[^1] == 0x3B,
+				"Invalid GIF89a header or trailer.");
+		}
+
+		static void TestRoslynAnalyzerAndPreprocessorDocs() {
+			RoslynAnalysisReport report = RoslynProjectAnalyzer.AnalyzeProject();
+			Assert(report.FilesAnalyzed >= 15, $"Expected Roslyn to analyze >= 15 .cs files, got {report.FilesAnalyzed}.");
+			if (!report.IsClean) {
+				throw new InvalidOperationException("Roslyn static analysis violations:\n  " + string.Join("\n  ", report.Violations));
+			}
+
+			// Verify Roslyn discovered our preprocessor symbols (#if DEBUG, KEEP_LOGS, UNITY_5_3_OR_NEWER, UNITY_2017_1_OR_NEWER)
+			var symbols = new HashSet<string>(StringComparer.Ordinal);
+			foreach (var occ in report.SymbolOccurrences) symbols.Add(occ.Symbol);
+			Assert(symbols.Contains("DEBUG") && symbols.Contains("KEEP_LOGS") && symbols.Contains("UNITY_5_3_OR_NEWER"),
+				"Roslyn analyzer failed to discover expected preprocessor directives.");
+
+			string docPath = RoslynProjectAnalyzer.WritePreprocessorMarkdownFile();
+			Assert(File.Exists(docPath), "PREPROCESSOR_SYMBOLS.md was not generated.");
 		}
 	}
 }

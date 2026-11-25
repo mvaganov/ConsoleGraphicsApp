@@ -6,10 +6,24 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using ConsoleGraphicsEngine.Engine;
+using ConsoleGraphicsEngine.Logging;
 using ConsoleGraphicsEngine.MathCore;
 using ConsoleGraphicsEngine.Rendering;
 
 namespace ConsoleGraphicsEngine.CliHost {
+	/// <summary>Bridges <see cref="Log.Sink"/> to <see cref="System.Console"/> colors and stdout.</summary>
+	public sealed class ConsoleLogSink : ILogSink {
+		public LogColorPair CurrentColor {
+			get => new LogColorPair((LogColor)Console.ForegroundColor, (LogColor)Console.BackgroundColor);
+			set {
+				Console.ForegroundColor = (ConsoleColor)value.Fore;
+				Console.BackgroundColor = (ConsoleColor)value.Back;
+			}
+		}
+
+		public void Write(string text) => Console.Write(text);
+	}
+
 	/// <summary>Differential ANSI half-block presenter (<c>U+2580</c> = 2 vertical pixels/cell) + SGR-1006 mouse init.</summary>
 	public sealed class TerminalPresenter : IDisposable {
 		const string CSI = "\u001b[";
