@@ -63,8 +63,8 @@ namespace ConsoleGraphicsEngine.Rendering {
 		}
 
 		/// <summary>
-		/// Writes a 24-bit BMP image of <paramref name="canvas"/> (with <paramref name="pixelScale"/> upscaling and
-		/// overlaid text glyph pixels so UI/labels appear in the bitmap). Defaults to <c>local/</c>.
+		/// Writes a 24-bit BMP image of <paramref name="canvas"/> (default <paramref name="pixelScale"/>=4 -> 4x8 pixel cells,
+		/// rendering 3x7 bitmap glyphs with 1px horizontal/vertical buffer). Defaults to <c>local/</c>.
 		/// </summary>
 		public static string SaveBmp(Canvas canvas, string filePath = "local/frame.bmp", int pixelScale = 4) {
 			EnsureDirectory(filePath);
@@ -114,7 +114,7 @@ namespace ConsoleGraphicsEngine.Rendering {
 			return Path.GetFullPath(filePath);
 		}
 
-		// Composites Canvas pixels + a crisp 3x5 mini bitmap font for TextChars when upscaled
+		// Composites Canvas pixels + 3x7 bitmap font inside each 4x8 logical cell (col 3 & row 7 always blank buffer)
 		static Rgb[] CompositeCanvasWithText(Canvas canvas, int scale, out int outW, out int outH) {
 			int w = canvas.Width, h = canvas.Height;
 			outW = w * scale;
@@ -131,22 +131,21 @@ namespace ConsoleGraphicsEngine.Rendering {
 				}
 			}
 
-			// Stamp text glyph patterns into the 1x2 pixel cell (scale x 2*scale output box)
-			if (scale >= 3) {
+			if (scale >= 4) {
 				int rows = canvas.Rows;
+				int boxW = scale, boxH = 2 * scale;
 				for (int r = 0; r < rows; r++) {
 					for (int c = 0; c < w; c++) {
 						char ch = canvas.TextChars[r * w + c];
 						if (ch == '\0' || ch == ' ') continue;
 						Rgb fg = canvas.TextColors[r * w + c];
-						ushort glyphMask = GetMiniGlyph3x5(ch);
+						uint glyphMask = GetMiniGlyph3x7(ch);
 						int boxX = c * scale, boxY = r * 2 * scale;
-						int boxW = scale, boxH = 2 * scale;
-						for (int gy = 0; gy < 5; gy++) {
+						for (int gy = 0; gy < 7; gy++) {
 							for (int gx = 0; gx < 3; gx++) {
-								if (((glyphMask >> ((4 - gy) * 3 + (2 - gx))) & 1) == 0) continue;
-								int px0 = boxX + (gx * boxW) / 3, px1 = boxX + ((gx + 1) * boxW) / 3;
-								int py0 = boxY + (gy * boxH) / 5, py1 = boxY + ((gy + 1) * boxH) / 5;
+								if (((glyphMask >> ((6 - gy) * 3 + (2 - gx))) & 1U) == 0) continue;
+								int px0 = boxX + (gx * boxW) / 4, px1 = boxX + ((gx + 1) * boxW) / 4;
+								int py0 = boxY + (gy * boxH) / 8, py1 = boxY + ((gy + 1) * boxH) / 8;
 								for (int y = py0; y < py1 && y < outH; y++) {
 									for (int x = px0; x < px1 && x < outW; x++) result[y * outW + x] = fg;
 								}
@@ -158,25 +157,47 @@ namespace ConsoleGraphicsEngine.Rendering {
 			return result;
 		}
 
-		// Compact 15-bit (3x5) bitmap font for ASCII digits, uppercase letters, and punctuation
-		static ushort GetMiniGlyph3x5(char ch) => char.ToUpperInvariant(ch) switch {
-			'0' => 0b111_101_101_101_111, '1' => 0b010_110_010_010_111, '2' => 0b111_001_111_100_111,
-			'3' => 0b111_001_111_001_111, '4' => 0b101_101_111_001_001, '5' => 0b111_100_111_001_111,
-			'6' => 0b111_100_111_101_111, '7' => 0b111_001_010_010_010, '8' => 0b111_101_111_101_111,
-			'9' => 0b111_101_111_001_111, 'A' => 0b010_101_111_101_101, 'B' => 0b110_101_110_101_110,
-			'C' => 0b111_100_100_100_111, 'D' => 0b110_101_101_101_110, 'E' => 0b111_100_110_100_111,
-			'F' => 0b111_100_110_100_100, 'G' => 0b111_100_101_101_111, 'H' => 0b101_101_111_101_101,
-			'I' => 0b111_010_010_010_111, 'J' => 0b001_001_001_101_111, 'K' => 0b101_101_110_101_101,
-			'L' => 0b100_100_100_100_111, 'M' => 0b101_111_111_101_101, 'N' => 0b111_101_101_101_101,
-			'O' => 0b111_101_101_101_111, 'P' => 0b111_101_111_100_100, 'Q' => 0b111_101_101_111_001,
-			'R' => 0b111_101_110_101_101, 'S' => 0b111_100_111_001_111, 'T' => 0b111_010_010_010_010,
-			'U' => 0b101_101_101_101_111, 'V' => 0b101_101_101_101_010, 'W' => 0b101_101_111_111_101,
-			'X' => 0b101_101_010_101_101, 'Y' => 0b101_101_010_010_010, 'Z' => 0b111_001_010_100_111,
-			':' => 0b000_010_000_010_000, '.' => 0b000_000_000_000_010, ',' => 0b000_000_000_010_100,
-			'-' => 0b000_000_111_000_000, '+' => 0b000_010_111_010_000, '#' => 0b101_111_101_111_101,
-			'[' or '(' => 0b011_010_010_010_011, ']' or ')' => 0b110_010_010_010_110,
-			'|' => 0b010_010_010_010_010, '/' => 0b001_001_010_100_100, '>' => 0b100_010_001_010_100,
-			'=' => 0b000_111_000_111_000, _ => 0b000_010_101_010_000
+		// 21-bit (3x7) bitmap font: standard letters occupy rows 0..4 (rows 5..6 empty); descenders (j,y,p,q,g,Q,',',';') use rows 5..6.
+		// Rendered into a 4x8 logical cell so col 3 and row 7 remain empty 1px buffers.
+		internal static uint GetMiniGlyph3x7(char ch) => ch switch {
+			// Lowercase descenders
+			'j' => 0b010_000_010_010_010_110_000U,
+			'p' => 0b000_111_101_111_100_100_000U,
+			'q' => 0b000_111_101_111_001_001_000U,
+			'y' => 0b000_101_101_010_010_100_000U,
+			'g' => 0b000_111_101_111_001_111_000U,
+			_ => char.ToUpperInvariant(ch) switch {
+				'0' => 0b111_101_101_101_111_000_000U, '1' => 0b010_110_010_010_111_000_000U,
+				'2' => 0b111_001_111_100_111_000_000U, '3' => 0b111_001_111_001_111_000_000U,
+				'4' => 0b101_101_111_001_001_000_000U, '5' => 0b111_100_111_001_111_000_000U,
+				'6' => 0b111_100_111_101_111_000_000U, '7' => 0b111_001_010_010_010_000_000U,
+				'8' => 0b111_101_111_101_111_000_000U, '9' => 0b111_101_111_001_111_000_000U,
+				'A' => 0b010_101_111_101_101_000_000U, 'B' => 0b110_101_110_101_110_000_000U,
+				'C' => 0b111_100_100_100_111_000_000U, 'D' => 0b110_101_101_101_110_000_000U,
+				'E' => 0b111_100_110_100_111_000_000U, 'F' => 0b111_100_110_100_100_000_000U,
+				'G' => 0b111_100_101_101_111_000_000U, 'H' => 0b101_101_111_101_101_000_000U,
+				'I' => 0b111_010_010_010_111_000_000U, 'J' => 0b011_001_001_101_111_000_000U,
+				'K' => 0b101_101_110_101_101_000_000U, 'L' => 0b100_100_100_100_111_000_000U,
+				'M' => 0b101_111_111_101_101_000_000U, 'N' => 0b111_101_101_101_101_000_000U,
+				'O' => 0b111_101_101_101_111_000_000U, 'P' => 0b111_101_111_100_100_000_000U,
+				'Q' => 0b111_101_101_101_111_001_000U, 'R' => 0b111_101_110_101_101_000_000U,
+				'S' => 0b111_100_111_001_111_000_000U, 'T' => 0b111_010_010_010_010_000_000U,
+				'U' => 0b101_101_101_101_111_000_000U, 'V' => 0b101_101_101_101_010_000_000U,
+				'W' => 0b101_101_111_111_101_000_000U, 'X' => 0b101_101_010_101_101_000_000U,
+				'Y' => 0b101_101_010_010_010_000_000U, 'Z' => 0b111_001_010_100_111_000_000U,
+				':' => 0b000_010_000_010_000_000_000U, ';' => 0b000_010_000_000_010_010_100U,
+				'.' => 0b000_000_000_000_010_000_000U, ',' => 0b000_000_000_000_010_010_100U,
+				'!' => 0b010_010_010_000_010_000_000U, '?' => 0b111_001_011_000_010_000_000U,
+				'-' => 0b000_000_111_000_000_000_000U, '+' => 0b000_010_111_010_000_000_000U,
+				'_' => 0b000_000_000_000_000_111_000U, '*' => 0b000_101_010_101_000_000_000U,
+				'#' => 0b101_111_101_111_101_000_000U, '=' => 0b000_111_000_111_000_000_000U,
+				'(' => 0b001_010_010_010_010_001_000U, ')' => 0b100_010_010_010_010_100_000U,
+				'[' => 0b011_010_010_010_010_011_000U, ']' => 0b110_010_010_010_010_110_000U,
+				'|' => 0b010_010_010_010_010_010_000U, '/' => 0b001_001_010_010_100_100_000U,
+				'\\' => 0b100_100_010_010_001_001_000U, '<' => 0b001_010_100_010_001_000_000U,
+				'>' => 0b100_010_001_010_100_000_000U, '%' => 0b101_001_010_100_101_000_000U,
+				_ => 0b000_010_101_010_000_000_000U
+			}
 		};
 
 		static void EnsureDirectory(string filePath) {
@@ -196,7 +217,7 @@ namespace ConsoleGraphicsEngine.Rendering {
 		public int PixelScale { get; }
 		public int FrameCount => _indexedFrames.Count;
 
-		public GifRecorder(int pixelScale = 2) {
+		public GifRecorder(int pixelScale = 4) {
 			PixelScale = Math.Clamp(pixelScale, 1, 8);
 		}
 
@@ -222,15 +243,37 @@ namespace ConsoleGraphicsEngine.Rendering {
 				}
 			}
 
-			// Overlay bright/dark text dots for TextChars
 			int rows = canvas.Rows;
-			for (int r = 0; r < rows; r++) {
-				for (int c = 0; c < canvas.Width; c++) {
-					if (canvas.TextChars[r * canvas.Width + c] == '\0') continue;
-					byte fgIdx = QuantizeRgb332(canvas.TextColors[r * canvas.Width + c]);
-					int cy = (r * 2) * PixelScale + PixelScale / 2;
-					int cx = c * PixelScale + PixelScale / 2;
-					if (cy < Height && cx < Width) indices[cy * Width + cx] = fgIdx;
+			if (PixelScale >= 4) {
+				int boxW = PixelScale, boxH = 2 * PixelScale;
+				for (int r = 0; r < rows; r++) {
+					for (int c = 0; c < canvas.Width; c++) {
+						char ch = canvas.TextChars[r * canvas.Width + c];
+						if (ch == '\0' || ch == ' ') continue;
+						byte fgIdx = QuantizeRgb332(canvas.TextColors[r * canvas.Width + c]);
+						uint glyphMask = FrameExporter.GetMiniGlyph3x7(ch);
+						int boxX = c * PixelScale, boxY = r * 2 * PixelScale;
+						for (int gy = 0; gy < 7; gy++) {
+							for (int gx = 0; gx < 3; gx++) {
+								if (((glyphMask >> ((6 - gy) * 3 + (2 - gx))) & 1U) == 0) continue;
+								int px0 = boxX + (gx * boxW) / 4, px1 = boxX + ((gx + 1) * boxW) / 4;
+								int py0 = boxY + (gy * boxH) / 8, py1 = boxY + ((gy + 1) * boxH) / 8;
+								for (int y = py0; y < py1 && y < Height; y++) {
+									for (int x = px0; x < px1 && x < Width; x++) indices[y * Width + x] = fgIdx;
+								}
+							}
+						}
+					}
+				}
+			} else {
+				for (int r = 0; r < rows; r++) {
+					for (int c = 0; c < canvas.Width; c++) {
+						if (canvas.TextChars[r * canvas.Width + c] == '\0') continue;
+						byte fgIdx = QuantizeRgb332(canvas.TextColors[r * canvas.Width + c]);
+						int cy = (r * 2) * PixelScale + PixelScale / 2;
+						int cx = c * PixelScale + PixelScale / 2;
+						if (cy < Height && cx < Width) indices[cy * Width + cx] = fgIdx;
+					}
 				}
 			}
 			_indexedFrames.Add(indices);

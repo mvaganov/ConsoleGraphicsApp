@@ -103,7 +103,7 @@ namespace ConsoleGraphicsEngine {
 				var scriptEngine = new InputScriptEngine();
 				if (!string.IsNullOrEmpty(scriptText)) scriptEngine.LoadScript(scriptText);
 
-				GifRecorder? gifRecorder = gifPath != null ? new GifRecorder(pixelScale: 2) : null;
+				GifRecorder? gifRecorder = gifPath != null ? new GifRecorder(pixelScale: 4) : null;
 				int targetFrames = headlessFrames > 0 ? headlessFrames : (scriptText != null ? 0 : 1);
 
 				int f = 0;

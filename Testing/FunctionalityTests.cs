@@ -384,12 +384,38 @@ namespace ConsoleGraphicsEngine.Testing {
 			Assert(ansi.Contains("\u001b[38;2;", StringComparison.Ordinal) && ansi.Contains("\u2580", StringComparison.Ordinal),
 				"ANSI frame snapshot must contain 24-bit escape codes and upper-half-block glyphs.");
 
-			string bmpPath = FrameExporter.SaveBmp(app.Canvas, "local/test_frame.bmp", pixelScale: 3);
+			string bmpPath = FrameExporter.SaveBmp(app.Canvas, "local/test_frame.bmp", pixelScale: 4);
 			Assert(File.Exists(bmpPath), "BMP file was not created in local/.");
 			byte[] bmpBytes = File.ReadAllBytes(bmpPath);
 			Assert(bmpBytes.Length > 54 && bmpBytes[0] == (byte)'B' && bmpBytes[1] == (byte)'M', "Invalid BMP header.");
 
-			var gif = new GifRecorder(pixelScale: 2);
+			// Verify 4x8 cell layout: col 3 & row 7 blank buffer, standard glyph 'H' empty on row 5, descenders 'j','y','p','q' use row 5
+			var fontCanvas = new Canvas(6, 2);
+			var bgCol = new Rgb(10, 20, 30);
+			var fgCol = new Rgb(250, 240, 230);
+			fontCanvas.Clear(bgCol);
+			fontCanvas.DrawOverlayText(new ScreenRect(0, 0, 6, 1), "Hjypq", fgCol, TextAlign.Left, null, 0f, TextWrapMode.None);
+			string fontBmpPath = FrameExporter.SaveBmp(fontCanvas, "local/test_font.bmp", pixelScale: 4);
+			byte[] fb = File.ReadAllBytes(fontBmpPath);
+			int outW = 6 * 4, outH = 2 * 4, stride = (outW * 3 + 3) & ~3;
+			Rgb ReadBmpPixel(int x, int y) {
+				int off = 54 + (outH - 1 - y) * stride + x * 3;
+				return new Rgb(fb[off + 2], fb[off + 1], fb[off]);
+			}
+			for (int cell = 0; cell < 5; cell++) {
+				for (int y = 0; y < 8; y++) Assert(ReadBmpPixel(cell * 4 + 3, y) == bgCol, $"Cell {cell} col 3 must be empty buffer.");
+				for (int x = 0; x < 4; x++) Assert(ReadBmpPixel(cell * 4 + x, 7) == bgCol, $"Cell {cell} row 7 must be empty buffer.");
+			}
+			// Cell 0 ('H'): row 4 lit on cols 0 & 2, row 5 completely empty (not copied from row 4)
+			Assert(ReadBmpPixel(0, 4) == fgCol && ReadBmpPixel(2, 4) == fgCol, "'H' row 4 should be lit.");
+			Assert(ReadBmpPixel(0, 5) == bgCol && ReadBmpPixel(1, 5) == bgCol && ReadBmpPixel(2, 5) == bgCol, "'H' row 5 must be empty.");
+			// Cells 1..4 ('j','y','p','q'): must have at least one lit descender pixel on row 5
+			for (int cell = 1; cell <= 4; cell++) {
+				bool hasDescent = ReadBmpPixel(cell * 4 + 0, 5) == fgCol || ReadBmpPixel(cell * 4 + 1, 5) == fgCol || ReadBmpPixel(cell * 4 + 2, 5) == fgCol;
+				Assert(hasDescent, $"Descender glyph at cell {cell} must light row 5.");
+			}
+
+			var gif = new GifRecorder(pixelScale: 4);
 			gif.CaptureFrame(app.Canvas);
 			app.ToggleViewMode();
 			app.StepFrame();
