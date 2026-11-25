@@ -1,6 +1,7 @@
 # ConsoleGraphicsEngine Architecture (LLM Reference)
 
-A command-line-first 2D vector graphics and physics game engine targeting .NET 10 (`net10.0`). Renders anti-aliased shapes at 2x vertical pixel density using the Unicode upper-half-block glyph (`U+2580`), 24-bit ANSI colors, a layered terminal character grid, and differential front/back buffer terminal output.
+Command-line-first, **zero-step Unity-portable** 2D vector graphics and physics game engine.
+`EngineCore/` has **zero dependencies** on `System.Console`, `UnityEngine`, or `.NET 7+/10`-only BCL types (`netstandard2.1` / C# 9 compatible); the exact same source files compile in `.NET 10` CLI and Unity 2022.3 LTS / Unity 6 (Mono & IL2CPP for WebGL, iOS, Android).
 
 ---
 
@@ -8,64 +9,61 @@ A command-line-first 2D vector graphics and physics game engine targeting .NET 1
 
 | Path | Namespace | Responsibility |
 | :--- | :--- | :--- |
-| `Program.cs` | `ConsoleGraphicsEngine` | CLI entry point (`--test`, `--frames N`, `--deterministic`, `--fast-float`). |
-| `MathCore/FNum.cs` | `ConsoleGraphicsEngine.MathCore` | Dual-mode scalar type: Q32.32 deterministic fixed-point (`FNum.Deterministic = true`) or hardware `float` (`false`). |
-| `MathCore/Vec2.cs` | `ConsoleGraphicsEngine.MathCore` | `Vec2` (hardware `float` 2D vector for rendering/particles/camera) and `FVec2` (`FNum`-backed 2D vector for deterministic physics). |
-| `MathCore/RgbAndTransform.cs` | `ConsoleGraphicsEngine.MathCore` | `Rgb` (24-bit color + HSV conversion + luminance), `Transform2D` (2x3 affine matrix + inverse), `ScreenRect` (terminal cell rectangle). |
-| `Rendering/ScreenShapes.cs` | `ConsoleGraphicsEngine.Rendering` | `ScreenShape`, `ScreenPolygon` (even-odd rule, convex/concave), `ScreenCircle` (inverse ellipse test). |
-| `Rendering/Canvas.cs` | `ConsoleGraphicsEngine.Rendering` | Pixel back-buffer (`Width x Height`), text layer (`Width x Rows`), N x N super-sampled rasterizer, `DrawText` (world-space with optional backdrop), and `DrawOverlayText` (screen-space `ScreenRect` with `TextWrapMode`). |
-| `Rendering/TerminalPresenter.cs` | `ConsoleGraphicsEngine.Rendering` | `Camera` (world-to-pixel view matrix) and `TerminalPresenter` (differential ANSI presenter). |
-| `Engine/FrameClock.cs` | `ConsoleGraphicsEngine.Engine` | Strict frame-based clock (`CurrentFrame`, fixed `FixedDeltaTime = 1f / TargetFps`). |
-| `Engine/EventQueue.cs` | `ConsoleGraphicsEngine.Engine` | Three-phase frame event queue: `UserInputEvent`, `TimedEvent` (frame-scheduled/recurring), `CollisionEvent`. |
-| `Engine/KeyInputSystem.cs` | `ConsoleGraphicsEngine.Engine` | Named `KeyCallbackGroup` registry with state-based toggling (`SetGroupEnabled`) and frame-based held-key tracking. |
-| `Engine/GameApplication.cs` | `ConsoleGraphicsEngine.Engine` | Main loop and state coordinator (`AppViewMode.Physics` vs `AppViewMode.Voronoi`, key group wiring, HUD). |
-| `Physics/Bodies.cs` | `ConsoleGraphicsEngine.Physics` | `Body`, `CircleBody`, `PolygonBody` (centroid alignment, ear-clipping triangulation of concave shapes into convex triangles, boomerang generator). |
-| `Physics/PhysicsWorld.cs` | `ConsoleGraphicsEngine.Physics` | Sub-stepped rigid-body solver: wall collisions, circle-vs-polygon, and SAT polygon-vs-polygon across convex parts. |
-| `Particles/ParticleSystem.cs` | `ConsoleGraphicsEngine.Particles` | Fast non-deterministic `float` particle emitter and updater triggered by `CollisionEvent`s. |
-| `Voronoi/VoronoiSystem.cs` | `ConsoleGraphicsEngine.Voronoi` | `VoronoiSystem` (camera-transformed Voronoi cell renderer, flashing center-selected region, seed placement) and modal `ColorPickerUI`. |
-| `Testing/FunctionalityTests.cs` | `ConsoleGraphicsEngine.Testing` | Automated CLI test suite invoked via `dotnet run -- --test`. |
+| `Program.cs` | `ConsoleGraphicsEngine` | CLI entry point (`HelpText` / `PrintHelp` at top; `--test`, `--frames N`, `--deterministic`, `--fast-float`). |
+| `EngineCore/MathCore/FNum.cs` | `ConsoleGraphicsEngine.MathCore` | Dual-mode scalar: 64-bit Q32.32 deterministic fixed-point (`FNum.Deterministic = true`, no `Int128`) or float (`false`). |
+| `EngineCore/MathCore/Vec2.cs` | `ConsoleGraphicsEngine.MathCore` | `Vec2` (float 2D vector for rendering/particles/camera) and `FVec2` (`FNum` 2D vector for deterministic physics). |
+| `EngineCore/MathCore/RgbAndTransform.cs` | `ConsoleGraphicsEngine.MathCore` | `Rgb` (24-bit color + HSV + Rec.709 luma), `Transform2D` (2x3 affine matrix + inverse), `ScreenRect` (cell rect + `ContainsCell`). |
+| `EngineCore/Rendering/IRenderBackend.cs` | `ConsoleGraphicsEngine.Rendering` | Host-agnostic draw contract (`IRenderBackend`), `TextAlign`, `TextWrapMode`, `Camera` (`ScreenPixelToWorld`, `ScreenCellToWorld`). |
+| `EngineCore/Rendering/ScreenShapes.cs` | `ConsoleGraphicsEngine.Rendering` | `ScreenShape`, `ScreenPolygon` (even-odd ray crossing, convexity check), `ScreenCircle` (inverse 2x2 ellipse test). |
+| `EngineCore/Rendering/Canvas.cs` | `ConsoleGraphicsEngine.Rendering` | `Canvas` software pixel/text back-buffer (`Width x Height` pixels, `Width x Rows` cells) and `CanvasRenderBackend`. |
+| `EngineCore/Engine/EventQueue.cs` | `ConsoleGraphicsEngine.Engine` | Platform-neutral `KeyCode`, `KeyEventData`, `PointerInputEvent` (`Move`/`Down`/`Drag`/`Up`/`Scroll`), `TimedEvent`, `CollisionEvent`, `AudioEvent`, 4-phase `EventQueue`. |
+| `EngineCore/Engine/KeyInputSystem.cs` | `ConsoleGraphicsEngine.Engine` | State-togglable `KeyCallbackGroup` registry (`OnKey`, `OnChar`, `OnAnyKey`, `OnPointer`), held-key frame window, virtual cursor fallback. |
+| `EngineCore/Engine/FrameClockAndAudio.cs` | `ConsoleGraphicsEngine.Engine` | `FrameClock` (fixed-step frame counter), `IAudioBackend`, `AudioSystem` (semantic cues + procedural synth params). |
+| `EngineCore/Engine/GameApplication.cs` | `ConsoleGraphicsEngine.Engine` | Host-agnostic frame coordinator (`StepFrame()`, `ActiveScene`, `PhysicsWorld`, `ParticleSystem`, `VoronoiSystem`, HUD). |
+| `EngineCore/SceneGraph/SceneAndEntities.cs` | `ConsoleGraphicsEngine.SceneGraph` | Unity-mirroring `Scene`, `Entity`, `Component`, `TransformComponent`, `RigidBodyComponent`, `ShapeRendererComponent`. |
+| `EngineCore/UI/UIWidgets.cs` | `ConsoleGraphicsEngine.UI` | Cell-grid widgets (`UIWidget`, `UIPanel`, `UIButton`, `UISlider`) with pointer click/drag hit-testing + keyboard focus. |
+| `EngineCore/Physics/Bodies.cs` | `ConsoleGraphicsEngine.Physics` | `Body`, `CircleBody`, `PolygonBody` (centroid centering, area inertia, O(N^2) ear-clipping concave decomposition, boomerang generator). |
+| `EngineCore/Physics/PhysicsWorld.cs` | `ConsoleGraphicsEngine.Physics` | 4x sub-stepped impulse solver: wall bounce, circle-vs-polygon, SAT polygon-vs-polygon across convex parts. |
+| `EngineCore/Particles/ParticleSystem.cs` | `ConsoleGraphicsEngine.Particles` | Hardware-float particle emitter & updater drawn via `IRenderBackend`. |
+| `EngineCore/Voronoi/VoronoiSystem.cs` | `ConsoleGraphicsEngine.Voronoi` | `VoronoiSystem` (affine scanline Voronoi cell renderer, flashing center-selected region, seed placement) + modal `ColorPickerUI`. |
+| `CliHost/TerminalHost.cs` | `ConsoleGraphicsEngine.CliHost` | `TerminalPresenter` (differential ANSI half-block `U+2580` output + SGR-1006 mouse init) + `ConsoleInputAdapter`. |
+| `UnityBridge/UnityEngineHost.cs` | `ConsoleGraphicsEngine.UnityBridge` | Drop-in Unity `MonoBehaviour` (`#if UNITY_5_3_OR_NEWER`) for `RetroPixelCanvas` (`Texture2D` blit) or `NativeHighResVector` + procedural `AudioClip` synth. |
+| `UnityBridge/UnityNativeVectorBackend.cs` | `ConsoleGraphicsEngine.UnityBridge` | Vector command recorder (`RecordedDrawCommand`) implementing `IRenderBackend` without software rasterization. |
+| `Testing/FunctionalityTests.cs` | `ConsoleGraphicsEngine.Testing` | 11-part automated CLI test suite (`dotnet run -- --test`). |
 
 ---
 
-## 2. Strict Frame Execution Pipeline
+## 2. Strict Frame Execution Pipeline (`GameApplication.StepFrame()`)
 
-Every call to `GameApplication.StepFrame()` advances simulation by exactly 1 frame (`Clock.FixedDeltaTime`) in this fixed order:
-
-1. **Input Resolution (`Events.ResolveInputEvents()`)**: Drains queued `UserInputEvent`s and dispatches them to enabled `KeyCallbackGroup`s snapshot at the start of dispatch.
-2. **Timed Event Resolution (`Events.ResolveTimedEvents(frame)`)**: Fires `TimedEvent` callbacks where `frame >= TargetFrame` (rescheduling recurring events).
-3. **Continuous Camera Control**: Applies held-key motion (`WASD` pan, `QE` rotate, `-/+` zoom) if the `"CameraControls"` group is enabled.
-4. **Physics Step (`World.Update(dt, frame)`)**: Runs 4 sub-steps using `FNum`/`FVec2`. Enqueues deduplicated `CollisionEvent`s into `EventQueue`.
-5. **Collision Resolution (`Events.ResolveCollisionEvents()`)**: Invokes subscribed collision handlers (e.g. triggering `Particles.EmitBurst` at contact points).
-6. **Particle Update (`Particles.Update(dt)`)**: Advances visual particles using fast hardware floats (`Vec2`).
-7. **Render (`RenderFrame()`)**: Draws either `PhysicsWorld` + `ParticleSystem` or `VoronoiSystem` + `ColorPickerUI`, followed by modular `ScreenRect` HUD widgets via `Canvas.DrawOverlayText`.
-8. **Clock Advance (`Clock.AdvanceFrame()`)**: Increments `CurrentFrame`.
+1. **Virtual Cursor Fallback (`KeyInput.UpdateVirtualCursorFallback(...)`)**: Defaults pointer to screen/camera center until hardware mouse/touch arrives.
+2. **Input & Pointer Resolution (`Events.ResolveInputEvents()`)**: Drains `UserInputEvent` + `PointerInputEvent` queues into enabled `KeyCallbackGroup`s (snapshot before dispatch to prevent mid-dispatch re-entry).
+3. **Timed Event Resolution (`Events.ResolveTimedEvents(frame)`)**: Fires `TimedEvent`s where `frame >= TargetFrame` (reschedules recurring).
+4. **Continuous Camera Control**: Applies held-key motion (`WASD` pan, `QE` rotate, `-/+` zoom) when `"CameraControls"` is enabled.
+5. **Physics Step (`World.Update(dt, frame)`)**: 4 sub-steps in `FNum`/`FVec2`; enqueues per-pair deduplicated `CollisionEvent`s.
+6. **Scene Sync & Update (`ActiveScene.SyncTransformsFromPhysics()` & `ActiveScene.Update(dt, frame)`)**: Copies `Body` transforms to `Entity.Transform` and ticks `Component`s.
+7. **Collision Resolution (`Events.ResolveCollisionEvents()`)**: Triggers `Particles.EmitBurst` and enqueues `AudioEvent`s.
+8. **Audio Resolution (`Events.ResolveAudioEvents()`)**: Updates `AudioSystem` history and invokes `IAudioBackend.PlayCue`.
+9. **Particle Update (`Particles.Update(dt)`)**: Advances float particles (`Vec2`).
+10. **Render (`RenderFrame()`)**: Issues draw calls to `IRenderBackend` (`CanvasRenderBackend` or `UnityNativeVectorBackend`).
+11. **Clock Advance (`Clock.AdvanceFrame()`)**: Increments `CurrentFrame`.
 
 ---
 
-## 3. Key Architectural Invariants
+## 3. Architectural Invariants & Conventions
 
+* **CLI Top-of-File Help Convention**:
+  * Every CLI entry point (`Program.cs`, plus any future custom linting, asset, or data CLI tools built for LLM agents) MUST place `HelpText` and `PrintHelp()` at the very top of the entry class so agents reading the file top-down acquire full functional and flag context within the first 25 lines.
 * **Coordinate Spaces**:
-  * **World Space**: `+X` right, `+Y` up. Transformed via `Camera.GetViewTransform(pixelWidth, pixelHeight)`.
-  * **Pixel Space**: `0..Width-1` horizontally, `0..Height-1` vertically (`+Y` down). `Height` is always even (`2 * Rows`).
-  * **Terminal Cell Space**: `0..Width-1` columns, `0..Rows-1` rows. Used by `ScreenRect` and `Canvas.DrawOverlayText`.
-* **Determinism Boundary**:
-  * Gameplay and physics (`PhysicsWorld`, `Body`, `FNum`, `FVec2`, `FrameClock`, `TimedEvent`) must remain frame-deterministic when `FNum.Deterministic == true`.
-  * Purely visual effects (`ParticleSystem`, `Canvas` rasterization, `VoronoiSystem` rendering) use hardware `float` (`Vec2`) for maximum throughput.
-* **Concave Polygon Collisions**:
-  * `PolygonBody` stores both the outer concave perimeter (`World` / `RenderWorld`) for even-odd rasterization and a list of ear-clipped convex triangles (`ConvexPartsWorld`) for exact SAT and circle-polygon collision detection.
-* **Input State Isolation**:
-  * Modal UIs (such as `ColorPickerUI`) disable `"CameraControls"` and `"VoronoiMode"` groups and enable `"ColorPickerUI"`, preventing key presses (e.g. `WASD`, `Enter`) from leaking into the underlying scene.
+  * **World**: `+X` right, `+Y` up (`Camera.GetViewTransform`).
+  * **Pixel**: `0..Width-1` right, `0..Height-1` down (`Height == 2 * Rows`).
+  * **Cell**: `0..Width-1` cols, `0..Rows-1` rows (`ScreenRect`, `DrawOverlayText`, `UIWidget`).
+* **Unity Portability Boundary**:
+  * `EngineCore/` must never reference `System.Console`, `ConsoleKey`, P/Invoke, or `.NET 7+/10`-only types (`Int128`).
 
 ---
 
 ## 4. Instructions for LLMs Updating This File
 
-Whenever you add, modify, or remove engine functionality in future iterations, update this document following these rules:
-
-1. **Keep it concise and high-signal**: Do not paste large code blocks or verbose prose. Document contracts, invariants, data flow, and file ownership.
-2. **Update Section 1 (Directory & Module Map)**: Add a row for any new file or class, or update the responsibility column if a module's role expands.
-3. **Update Section 2 (Frame Execution Pipeline)**: If a new subsystem hooks into `GameApplication.StepFrame()` (e.g., audio cues, AI tick, entity component lifecycle, scene transitions), insert it at its exact ordinal step.
-4. **Document New Input Groups or Event Types**:
-   * When adding an `IGameEvent` implementation, list its producer and consumer phases.
-   * When adding a `KeyCallbackGroup`, document which game states enable/disable it.
-5. **Register Verification Coverage**: Every new feature must include a corresponding unit/integration check in `Testing/FunctionalityTests.cs` so `dotnet run -- --test` continues to validate the entire architecture.
+1. **High-density, low-token updates**: Document contracts, invariants, data flow, and file ownership using terse domain terminology; omit boilerplate prose.
+2. **Update Section 1 & Section 2**: Add any new file/module to Section 1 and any new `StepFrame()` phase to Section 2 in exact execution order.
+3. **Enforce CLI & Test Invariants**: Any new CLI tool must expose `HelpText`/`PrintHelp()` at the top of its entry file, and any new engine feature must add a deterministic verification check in `Testing/FunctionalityTests.cs`.
